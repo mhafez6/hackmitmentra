@@ -29,26 +29,31 @@ class TalkingPointsApp extends AppServer {
     });
   }
 
-  private async generateTalkingPoints(name: string): Promise<TalkingPoints> {
+  private async generateTalkingPoints(query: string): Promise<TalkingPoints> {
     try {
-      const prompt = `Generate talking points for a conversation with someone named "${name}". 
-      
-      Please provide:
-      1. A brief background summary (if this is a known public figure, or general conversation starters if not)
-      2. 3-5 interesting conversation topics
-      3. 3-5 thoughtful questions to ask
-      
-      Format your response as JSON with the following structure:
+      const prompt = `You are a conversation assistant helping someone prepare for social interactions. Based on the query "${query}", generate helpful talking points and conversation starters.
+
+      If the query is about a specific person:
+      - Provide relevant background information
+      - Suggest conversation topics related to their work, interests, or achievements
+      - Include thoughtful questions to ask them
+
+      If the query is about a topic, situation, or general conversation:
+      - Provide context and background information
+      - Suggest interesting discussion points
+      - Include engaging questions to explore the topic
+
+      Format your response as JSON:
       {
-        "background": "Brief background or general info",
-        "topics": ["topic1", "topic2", "topic3"],
-        "questions": ["question1", "question2", "question3"]
+        "background": "Relevant context and background information",
+        "topics": ["3-5 specific conversation topics"],
+        "questions": ["3-5 thoughtful questions to ask"]
       }
       
-      Keep responses concise and conversational. If the name is not a recognizable public figure, focus on general conversation starters and getting-to-know-you topics.`;
+      Keep responses conversational, specific, and actionable. Focus on creating genuine connection and meaningful dialogue.`;
 
       const completion = await openai.chat.completions.create({
-        model: "gpt-3.5-turbo",
+        model: "gpt-4o-mini",
         messages: [
           {
             role: "system",
@@ -59,7 +64,7 @@ class TalkingPointsApp extends AppServer {
             content: prompt
           }
         ],
-        max_tokens: 500,
+        max_tokens: 800,
         temperature: 0.7,
       });
 
@@ -73,16 +78,16 @@ class TalkingPointsApp extends AppServer {
       console.error('Error generating talking points:', error);
       // Fallback response
       return {
-        background: `General conversation with ${name}`,
+        background: `General conversation about: ${query}`,
         topics: [
-          "Ask about their interests and hobbies",
-          "Discuss current events or shared experiences",
-          "Talk about work or professional background"
+          "Ask about their perspective on this topic",
+          "Share your own experiences and insights",
+          "Explore different angles and viewpoints"
         ],
         questions: [
-          "What brings you here today?",
-          "What are you passionate about?",
-          "What's been keeping you busy lately?"
+          "What's your take on this?",
+          "How did you get interested in this?",
+          "What's been your experience with this?"
         ]
       };
     }
@@ -126,18 +131,19 @@ class TalkingPointsApp extends AppServer {
     const helpText = `Talking Points App
 
 How to use:
-• Say a person's name to get conversation topics
+• Say "Chat" followed by any topic or person
 • The app will research and provide:
   - Background information
   - Discussion topics  
   - Questions to ask
 
 Examples:
-• "John Smith"
-• "Sarah Johnson"
-• "Tell me about Mike"
+• "Chat John Smith"
+• "Chat artificial intelligence"
+• "Chat climate change"
+• "Chat startup funding"
 
-Say any name to start!`;
+Say "Chat" + your topic to start!`;
 
     session.layouts.showTextWall(helpText, {
       view: ViewType.MAIN,
@@ -145,70 +151,94 @@ Say any name to start!`;
     });
   }
 
-  private extractNameFromText(text: string): string | null {
+  private extractQueryFromText(text: string): string | null {
+    console.log(`🚨 FUNCTION CALLED WITH: "${text}"`);
     const lowerText = text.toLowerCase().trim();
+    console.log(`🔍 Lowercase text: "${lowerText}"`);
     
     // Handle help requests
     if (lowerText.includes('help') || lowerText.includes('instructions')) {
+      console.log(`✅ Help detected`);
       return 'help';
     }
-
-    // Remove common prefixes
-    const prefixes = ['tell me about', 'research', 'look up', 'find info on', 'who is'];
-    let cleanText = lowerText;
     
-    for (const prefix of prefixes) {
-      if (cleanText.startsWith(prefix)) {
-        cleanText = cleanText.substring(prefix.length).trim();
-        break;
+    // Simple test - just return the text after "chat"
+    if (lowerText.includes('chat')) {
+      console.log(`✅ FOUND CHAT!`);
+      const parts = text.split(/chat[,\s]*/i);
+      console.log(`🎯 Split parts:`, parts);
+      if (parts.length > 1) {
+        const result = parts[1].trim().replace(/[.!?]+$/, '');
+        console.log(`🎯 RETURNING: "${result}"`);
+        return result;
       }
     }
-
-    // Basic name validation - should have at least 2 characters and look like a name
-    if (cleanText.length >= 2 && /^[a-zA-Z\s'-]+$/.test(cleanText)) {
-      // Capitalize first letter of each word
-      return cleanText.split(' ')
-        .map(word => word.charAt(0).toUpperCase() + word.slice(1))
-        .join(' ');
-    }
-
+    
+    console.log(`❌ NO MATCH - RETURNING NULL`);
     return null;
   }
 
   protected async onSession(session: AppSession, sessionId: string, userId: string): Promise<void> {
     this.currentSession = session;
+    console.log(`🎯 New session started: ${sessionId} for user: ${userId}`);
     
     // Show welcome message
-    session.layouts.showTextWall("Talking Points App Ready!\n\nSay a person's name to get conversation topics.\n\nSay 'help' for instructions.", {
+    session.layouts.showTextWall("Talking Points App Ready!\n\nSay 'Chat' followed by any topic or person.\n\nExample: 'Chat artificial intelligence'\n\nSay 'help' for instructions.", {
       view: ViewType.MAIN,
-      durationMs: 5000
+      durationMs: 6000
     });
+
+    // Add test message after welcome
+    setTimeout(() => {
+      session.layouts.showTextWall("🔊 Testing voice input...\n\nIf you can see this, the app is working!\n\nTry saying something now.", {
+        view: ViewType.MAIN,
+        durationMs: 4000
+      });
+    }, 6000);
 
     // Handle real-time transcription
     session.events.onTranscription(async (data) => {
+      console.log(`🎤 Transcription received:`, {
+        text: data.text,
+        isFinal: data.isFinal,
+        confidence: data.confidence || 'unknown'
+      });
+
+      // Show ALL transcription data for debugging
+      if (data.text && data.text.trim().length > 0) {
+        session.layouts.showTextWall(`🎤 Heard: "${data.text}"\nFinal: ${data.isFinal}\nProcessing: ${this.isProcessing}`, {
+          view: ViewType.MAIN,
+          durationMs: 2000
+        });
+      }
+
       if (data.isFinal && !this.isProcessing) {
-        const name = this.extractNameFromText(data.text);
+        console.log(`✅ Processing final transcription: "${data.text}"`);
+        console.log(`🔍 About to call extractQueryFromText with: "${data.text}"`);
+        const query = this.extractQueryFromText(data.text);
+        console.log(`🔍 extractQueryFromText returned: "${query}"`);
         
-        if (name === 'help') {
+        if (query === 'help') {
           this.showHelp(session);
           return;
         }
         
-        if (name) {
+        if (query) {
           this.isProcessing = true;
+          console.log(`🚀 Starting research for: ${query}`);
           
           // Show processing message
-          session.layouts.showTextWall(`Researching ${name}...\n\nGenerating talking points...`, {
+          session.layouts.showTextWall(`Researching "${query}"...\n\nGenerating talking points...`, {
             view: ViewType.MAIN,
             durationMs: 3000
           });
 
           try {
-            const talkingPoints = await this.generateTalkingPoints(name);
-            this.displayTalkingPoints(session, name, talkingPoints);
+            const talkingPoints = await this.generateTalkingPoints(query);
+            this.displayTalkingPoints(session, query, talkingPoints);
           } catch (error) {
-            console.error('Error processing name:', error);
-            session.layouts.showTextWall(`Sorry, I couldn't generate talking points for ${name}. Please try again.`, {
+            console.error('Error processing query:', error);
+            session.layouts.showTextWall(`Sorry, I couldn't generate talking points for "${query}". Please try again.`, {
               view: ViewType.MAIN,
               durationMs: 3000
             });
@@ -216,15 +246,11 @@ Say any name to start!`;
             // Reset processing flag after all displays are done
             setTimeout(() => {
               this.isProcessing = false;
+              console.log(`✅ Processing complete, ready for next input`);
             }, 25000);
           }
-        } else {
-          // Show feedback for unrecognized input
-          session.layouts.showTextWall(`I didn't recognize "${data.text}" as a name.\n\nPlease say a person's name or 'help' for instructions.`, {
-            view: ViewType.MAIN,
-            durationMs: 3000
-          });
         }
+        // No feedback for unrecognized input - just ignore it
       }
     });
 
