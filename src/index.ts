@@ -20,6 +20,8 @@ interface TalkingPoints {
 class TalkingPointsApp extends AppServer {
   private currentSession: AppSession | null = null;
   private isProcessing = false;
+  private lastTalkingPoints: string = "";
+  private autoScrollInterval: NodeJS.Timeout | null = null;
 
   constructor() {
     super({
@@ -94,37 +96,70 @@ class TalkingPointsApp extends AppServer {
   }
 
   private displayTalkingPoints(session: AppSession, name: string, points: TalkingPoints): void {
-    // Display background
-    session.layouts.showTextWall(`Talking with: ${name}\n\n${points.background}`, {
+    // Create comprehensive talking points text and store it
+    this.lastTalkingPoints = `Talking with: ${name}
+
+BACKGROUND:
+${points.background}
+
+TOPICS TO DISCUSS:
+${points.topics.map((topic, i) => `${i + 1}. ${topic}`).join('\n')}
+
+QUESTIONS TO ASK:
+${points.questions.map((q, i) => `${i + 1}. ${q}`).join('\n')}
+
+Say 'Chat [topic]' for new talking points`;
+
+    // Start auto-scroll display
+    this.startAutoScroll(session);
+  }
+
+  private startAutoScroll(session: AppSession): void {
+    // Clear any existing auto-scroll
+    if (this.autoScrollInterval) {
+      clearInterval(this.autoScrollInterval);
+    }
+
+    if (!this.lastTalkingPoints) return;
+    
+    const lines = this.lastTalkingPoints.split('\n');
+    const screenLines = 8; // Lines that fit comfortably on screen
+    const totalSections = Math.ceil(lines.length / screenLines);
+    
+    if (totalSections <= 1) {
+      // Content fits on one screen, no need to scroll
+      session.layouts.showTextWall(this.lastTalkingPoints, {
+        view: ViewType.MAIN,
+        durationMs: 0
+      });
+      return;
+    }
+
+    let currentSection = 0;
+    
+    // Display first section immediately
+    this.displaySection(session, lines, currentSection, screenLines, totalSections);
+    
+    // Auto-scroll every 8 seconds
+    this.autoScrollInterval = setInterval(() => {
+      currentSection = (currentSection + 1) % totalSections;
+      this.displaySection(session, lines, currentSection, screenLines, totalSections);
+      console.log(`📜 Auto-scrolled to section ${currentSection + 1}/${totalSections}`);
+    }, 8000);
+  }
+
+  private displaySection(session: AppSession, lines: string[], section: number, screenLines: number, totalSections: number): void {
+    const startLine = section * screenLines;
+    const endLine = Math.min(startLine + screenLines, lines.length);
+    const visibleContent = lines.slice(startLine, endLine).join('\n');
+    
+    const scrollIndicator = totalSections > 1 ? 
+      `\n\n[Page ${section + 1}/${totalSections}] Auto-scrolling...` : '';
+    
+    session.layouts.showTextWall(visibleContent + scrollIndicator, {
       view: ViewType.MAIN,
-      durationMs: 5000
+      durationMs: 0
     });
-
-    // Display topics after a delay
-    setTimeout(() => {
-      const topicsText = `Topics to discuss:\n\n${points.topics.map((topic, i) => `${i + 1}. ${topic}`).join('\n\n')}`;
-      session.layouts.showTextWall(topicsText, {
-        view: ViewType.MAIN,
-        durationMs: 8000
-      });
-    }, 5500);
-
-    // Display questions after another delay
-    setTimeout(() => {
-      const questionsText = `Questions to ask:\n\n${points.questions.map((q, i) => `${i + 1}. ${q}`).join('\n\n')}`;
-      session.layouts.showTextWall(questionsText, {
-        view: ViewType.MAIN,
-        durationMs: 8000
-      });
-    }, 14000);
-
-    // Show completion message
-    setTimeout(() => {
-      session.layouts.showTextWall("Say another name to get new talking points, or say 'help' for instructions.", {
-        view: ViewType.MAIN,
-        durationMs: 4000
-      });
-    }, 22500);
   }
 
   private showHelp(session: AppSession): void {
@@ -162,13 +197,19 @@ Say "Chat" + your topic to start!`;
       return 'help';
     }
     
-    // Simple test - just return the text after "chat"
+    // Extract text after "chat" - handle "chat, who is" format
     if (lowerText.includes('chat')) {
       console.log(`✅ FOUND CHAT!`);
       const parts = text.split(/chat[,\s]*/i);
       console.log(`🎯 Split parts:`, parts);
       if (parts.length > 1) {
-        const result = parts[1].trim().replace(/[.!?]+$/, '');
+        let result = parts[1].trim().replace(/[.!?]+$/, '');
+        
+        // Handle "who is X" format - extract just the name/topic
+        if (result.toLowerCase().startsWith('who is ')) {
+          result = result.substring(7); // Remove "who is "
+        }
+        
         console.log(`🎯 RETURNING: "${result}"`);
         return result;
       }
@@ -204,15 +245,10 @@ Say "Chat" + your topic to start!`;
         confidence: data.confidence || 'unknown'
       });
 
-      // Show ALL transcription data for debugging
-      if (data.text && data.text.trim().length > 0) {
-        session.layouts.showTextWall(`🎤 Heard: "${data.text}"\nFinal: ${data.isFinal}\nProcessing: ${this.isProcessing}`, {
-          view: ViewType.MAIN,
-          durationMs: 2000
-        });
-      }
+      // Don't show any transcriptions on screen to avoid overwriting talking points
+      // All transcription feedback is in console logs only
 
-      if (data.isFinal && !this.isProcessing) {
+      if (data.isFinal) {
         console.log(`✅ Processing final transcription: "${data.text}"`);
         console.log(`🔍 About to call extractQueryFromText with: "${data.text}"`);
         const query = this.extractQueryFromText(data.text);
@@ -224,7 +260,7 @@ Say "Chat" + your topic to start!`;
         }
         
         if (query) {
-          this.isProcessing = true;
+          // Always process new chat commands, even if already processing
           console.log(`🚀 Starting research for: ${query}`);
           
           // Show processing message
@@ -232,6 +268,9 @@ Say "Chat" + your topic to start!`;
             view: ViewType.MAIN,
             durationMs: 3000
           });
+
+          // Set processing flag after showing message to allow new commands
+          this.isProcessing = true;
 
           try {
             const talkingPoints = await this.generateTalkingPoints(query);
@@ -243,16 +282,14 @@ Say "Chat" + your topic to start!`;
               durationMs: 3000
             });
           } finally {
-            // Reset processing flag after all displays are done
-            setTimeout(() => {
-              this.isProcessing = false;
-              console.log(`✅ Processing complete, ready for next input`);
-            }, 25000);
+            this.isProcessing = false;
           }
         }
         // No feedback for unrecognized input - just ignore it
       }
     });
+
+    // Auto-scroll cleanup will happen when new content is generated
 
     session.events.onGlassesBattery((data) => {
       console.log('Glasses battery:', data);
